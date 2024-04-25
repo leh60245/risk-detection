@@ -39,6 +39,9 @@ def build_transform(is_train, args):
         return transform
 
     t = []
+    t.append(transforms.ToTensor())
+    t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+    
     if resize_im and args.augment_train_data:
         size = int(args.input_size / args.eval_crop_ratio)
         t.append(
@@ -47,7 +50,7 @@ def build_transform(is_train, args):
             ),  # to maintain same ratio w.r.t. 224 images
         )
         t.append(transforms.CenterCrop(args.input_size))
-
-    t.append(transforms.ToTensor())
-    t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+        return transforms.Compose(t)
+        
+    t.append(transforms.Resize(tuple(args.input_size)))
     return transforms.Compose(t)
