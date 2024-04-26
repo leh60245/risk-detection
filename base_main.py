@@ -14,18 +14,22 @@ from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy
 from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
-from timm.utils import NativeScaler, get_state_dict, ModelEma
+from timm.utils import NativeScaler
 
 from datasets import build_dataset
 from engine import train_one_epoch, evaluate
 
 import utils
+""" 
+python base_main.py --model swinv2_base_window8_256 --input-size 256 256 --batch-size 16 --lr 1e-5 --no-augment-train-data --data-path /data1/sliver/jwsuh/construction_dataset/aihub/resized/ --output_dir output/swinv2_base_window8_256/resize/ --device cuda:4 
+python base_main.py --model swinv2_base_window8_256 --input-size 256 256 --batch-size 16 --lr 1e-5 --no-augment-train-data --data-path /data1/sliver/jwsuh/construction_dataset/aihub/resized2/ --output_dir output/swinv2_base_window8_256/resize/class_6/ --device cuda:6
 
+"""
 # fmt: off
 def get_args_parser():
-    parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
-    parser.add_argument('--batch-size', default=16, type=int)
-    parser.add_argument('--epochs', default=300, type=int)
+    parser = argparse.ArgumentParser('Risk Detection Model training and evaluation script', add_help=False)
+    parser.add_argument('--batch-size', default=32, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--bce-loss', action='store_true')
     parser.add_argument('--unscale-lr', action='store_true')
 
@@ -35,15 +39,10 @@ def get_args_parser():
     parser.add_argument('--input-size', default=224, nargs="+", type=int, help='images input size')
 
     parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
-                        help='Dropout rate (default: 0.)')
+                        help='Dropout rate (default: 0.0)')
     parser.add_argument('--drop-path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
-
-    parser.add_argument('--model-ema', action='store_true')
-    parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
-    parser.set_defaults(model_ema=True)
-    parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
-    parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
+    
 
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
@@ -69,18 +68,18 @@ def get_args_parser():
                         help='learning rate noise limit percent (default: 0.67)')
     parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV',
                         help='learning rate noise std-dev (default: 1.0)')
-    parser.add_argument('--warmup-lr', type=float, default=1e-6, metavar='LR',
+    parser.add_argument('--warmup-lr', type=float, default=5e-4, metavar='LR',
                         help='warmup learning rate (default: 1e-6)')
     parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
                         help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
 
     parser.add_argument('--decay-epochs', type=float, default=30, metavar='N',
                         help='epoch interval to decay LR')
-    parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N',
+    parser.add_argument('--warmup-epochs', type=int, default=0, metavar='N',
                         help='epochs to warmup LR, if scheduler supports')
-    parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N',
+    parser.add_argument('--cooldown-epochs', type=int, default=0, metavar='N',
                         help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
-    parser.add_argument('--patience-epochs', type=int, default=10, metavar='N',
+    parser.add_argument('--patience-epochs', type=int, default=0, metavar='N',
                         help='patience epochs for Plateau LR scheduler (default: 10')
     parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE',
                         help='LR decay rate (default: 0.1)')
@@ -122,14 +121,11 @@ def get_args_parser():
     # * Cosub params
     parser.add_argument('--cosub', action='store_true') 
     
-    # * Finetuning params
-    parser.add_argument('--finetune', default='', help='finetune from checkpoint')
-    
     # Dataset parameters
-    parser.add_argument('--data-path', default='/home/sliver/jiwon/dataset/construction_sampled/', type=str,
+    parser.add_argument('--data-path', default='/data1/sliver/jwsuh/construction_dataset/aihub/resized2/', type=str,
                         help='dataset path')
 
-    parser.add_argument('--output_dir', default='output/',
+    parser.add_argument('--output_dir', default='output/resnet152/resize/class_6/',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -140,7 +136,7 @@ def get_args_parser():
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--eval-crop-ratio', default=0.875, type=float, help="Crop ratio for evaluation")
     parser.add_argument('--dist-eval', action='store_true', default=False, help='Enabling distributed evaluation')
-    parser.add_argument('--num_workers', default=10, type=int)
+    parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--pin-mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no-pin-mem', action='store_false', dest='pin_mem',
@@ -189,76 +185,33 @@ def main(args):
     mixup_fn = None
 
     print(f"Creating model: {args.model}")
+
     model = create_model(
         args.model,
-        pretrained=False,
+        pretrained=True,
         num_classes=args.nb_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
-        # img_size=args.input_size
+        # img_size=tuple(args.input_size)[0]
     )
-
-                    
-    if args.finetune:
-        if args.finetune.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.finetune, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.finetune, map_location='cpu')
-
-        checkpoint_model = checkpoint['model']
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint_model[k]
-
-        # interpolate position embedding
-        pos_embed_checkpoint = checkpoint_model['pos_embed']
-        embedding_size = pos_embed_checkpoint.shape[-1]
-        num_patches = model.patch_embed.num_patches
-        num_extra_tokens = model.pos_embed.shape[-2] - num_patches
-        # height (== width) for the checkpoint position embedding
-        orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
-        # height (== width) for the new position embedding
-        new_size = int(num_patches ** 0.5)
-        # class_token and dist_token are kept unchanged
-        extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
-        # only the position tokens are interpolated
-        pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
-        pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
-        pos_tokens = torch.nn.functional.interpolate(
-            pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
-        pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
-        new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
-        checkpoint_model['pos_embed'] = new_pos_embed
-
-        model.load_state_dict(checkpoint_model, strict=False)
             
     model.to(device)
 
     model_ema = None
-    if args.model_ema:
-        # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
-        model_ema = ModelEma(
-            model,
-            decay=args.model_ema_decay,
-            device='cpu' if args.model_ema_force_cpu else '',
-            resume='')
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
-    if not args.unscale_lr:
-        linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
-        args.lr = linear_scaled_lr
+    # if not args.unscale_lr:
+    #     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
+    #     args.lr = linear_scaled_lr
     optimizer = create_optimizer(args, model_without_ddp)
     loss_scaler = NativeScaler()
 
     lr_scheduler, _ = create_scheduler(args, optimizer)
 
-    criterion = LabelSmoothingCrossEntropy()
+    # criterion = LabelSmoothingCrossEntropy()
 
     if args.smoothing:
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
@@ -281,14 +234,12 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
-            if args.model_ema:
-                utils._load_checkpoint_for_ema(model_ema, checkpoint['model_ema'])
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc']:.5f}%")
         return
 
     print(f"Start training for {args.epochs} epochs")
@@ -312,17 +263,16 @@ def main(args):
                     'optimizer': optimizer.state_dict(),
                     'lr_scheduler': lr_scheduler.state_dict(),
                     'epoch': epoch,
-                    'model_ema': get_state_dict(model_ema),
                     'scaler': loss_scaler.state_dict(),
                     'args': args,
                 }, checkpoint_path)
              
 
         test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc']:.1f}%")
         
-        if max_accuracy < test_stats["acc1"]:
-            max_accuracy = test_stats["acc1"]
+        if max_accuracy < test_stats["acc"]:
+            max_accuracy = test_stats["acc"]
             if args.output_dir:
                 checkpoint_paths = [output_dir / 'best_checkpoint.pth']
                 for checkpoint_path in checkpoint_paths:
@@ -331,7 +281,6 @@ def main(args):
                         'optimizer': optimizer.state_dict(),
                         'lr_scheduler': lr_scheduler.state_dict(),
                         'epoch': epoch,
-                        'model_ema': get_state_dict(model_ema),
                         'scaler': loss_scaler.state_dict(),
                         'args': args,
                     }, checkpoint_path)
@@ -343,8 +292,7 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
-        
-        
+
         
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
@@ -356,7 +304,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser('Risk Detection Model training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
