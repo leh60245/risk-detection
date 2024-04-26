@@ -6,11 +6,16 @@ Train and eval functions used in main.py
 import math
 import sys
 from typing import Iterable, Optional
+import numpy as np
 
 import torch
 
 from timm.data import Mixup
 from timm.utils import accuracy, ModelEma
+
+from sklearn.metrics import accuracy_score
+
+from torchmetrics.classification import MulticlassAccuracy
 
 from losses import DistillationLoss
 import utils
@@ -27,26 +32,26 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
     
-    if args.cosub:
-        criterion = torch.nn.BCEWithLogitsLoss()
+    # if args.cosub:
+    #     criterion = torch.nn.BCEWithLogitsLoss()
         
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
-        if mixup_fn is not None:
-            samples, targets = mixup_fn(samples, targets)
+        # if mixup_fn is not None:
+        #     samples, targets = mixup_fn(samples, targets)
             
-        if args.cosub:
-            samples = torch.cat((samples,samples),dim=0)
+        # if args.cosub:
+        #     samples = torch.cat((samples,samples),dim=0)
             
-        if args.bce_loss:
-            targets = targets.gt(0.0).type(targets.dtype)
+        # if args.bce_loss:
+        #     targets = targets.gt(0.0).type(targets.dtype)
          
         with torch.cuda.amp.autocast():
             outputs = model(samples)
             if not args.cosub:
-                loss = criterion(samples, outputs, targets)
+                loss = criterion(outputs, targets)
             else:
                 outputs = torch.split(outputs, outputs.shape[0]//2, dim=0)
                 loss = 0.25 * criterion(outputs[0], targets) 
@@ -89,6 +94,8 @@ def evaluate(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
 
+    all_target = []
+    all_output = []
     for images, target in metric_logger.log_every(data_loader, 10, header):
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
@@ -97,16 +104,22 @@ def evaluate(data_loader, model, device):
         with torch.cuda.amp.autocast():
             output = model(images)
             loss = criterion(output, target)
-
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-
+            
+        target = target.to("cpu")
+        output = output.to("cpu")
+        
+        all_target += target
+        for i in output:
+            all_output.append(np.argmax(i))
+        
         batch_size = images.shape[0]
+        acc = accuracy_score(all_target[-batch_size:], all_output[-batch_size:]) * 100
+
         metric_logger.update(loss=loss.item())
-        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+        metric_logger.meters['acc'].update(acc, n=batch_size)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
-
+    print('* Acc {top.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(top=metric_logger.acc, losses=metric_logger.loss))
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
