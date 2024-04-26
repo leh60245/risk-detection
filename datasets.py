@@ -9,11 +9,14 @@ from timm.data import create_transform
 
 
 def build_dataset(is_train, args):
-    transform = build_transform(is_train, args)
 
-    root = os.path.join(args.data_path, "train" if is_train else "test")
+    transform = build_transform(is_train, args)
+    root = os.path.join(args.data_path, "train" if is_train else "val")
+    if args.is_test is not None:
+        transform = build_transform(False, args)
+        root = os.path.join(args.data_path, "test")
     dataset = datasets.ImageFolder(root, transform=transform)
-    nb_classes = 6
+    nb_classes = args.nb_classes
 
     return dataset, nb_classes
 
@@ -41,7 +44,7 @@ def build_transform(is_train, args):
     t = []
     t.append(transforms.ToTensor())
     t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
-    
+
     # if resize_im and args.augment_train_data:
     #     size = int(args.input_size / args.eval_crop_ratio)
     #     t.append(
@@ -51,6 +54,6 @@ def build_transform(is_train, args):
     #     )
     #     t.append(transforms.CenterCrop(args.input_size))
     #     return transforms.Compose(t)
-        
+
     t.append(transforms.Resize(tuple(args.input_size)))
     return transforms.Compose(t)

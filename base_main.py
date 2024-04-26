@@ -20,11 +20,7 @@ from datasets import build_dataset
 from engine import train_one_epoch, evaluate
 
 import utils
-""" 
-python base_main.py --model swinv2_base_window8_256 --input-size 256 256 --batch-size 16 --lr 1e-5 --no-augment-train-data --data-path /data1/sliver/jwsuh/construction_dataset/aihub/resized/ --output_dir output/swinv2_base_window8_256/resize/ --device cuda:4 
-python base_main.py --model swinv2_base_window8_256 --input-size 256 256 --batch-size 16 --lr 1e-5 --no-augment-train-data --data-path /data1/sliver/jwsuh/construction_dataset/aihub/resized2/ --output_dir output/swinv2_base_window8_256/resize/class_6/ --device cuda:6
 
-"""
 # fmt: off
 def get_args_parser():
     parser = argparse.ArgumentParser('Risk Detection Model training and evaluation script', add_help=False)
@@ -37,7 +33,8 @@ def get_args_parser():
     parser.add_argument('--model', default='resnet152', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--input-size', default=224, nargs="+", type=int, help='images input size')
-
+    parser.add_argument('--nb-classes', default=2, type=int)
+    
     parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
                         help='Dropout rate (default: 0.0)')
     parser.add_argument('--drop-path', type=float, default=0.1, metavar='PCT',
@@ -122,10 +119,10 @@ def get_args_parser():
     parser.add_argument('--cosub', action='store_true') 
     
     # Dataset parameters
-    parser.add_argument('--data-path', default='/data1/sliver/jwsuh/construction_dataset/aihub/resized2/', type=str,
+    parser.add_argument('--data-path', default='/data1/sliver/jwsuh/construction_dataset/aihub/resized/', type=str,
                         help='dataset path')
 
-    parser.add_argument('--output_dir', default='output/resnet152/resize/class_6/',
+    parser.add_argument('--output_dir', default='output/resnet152/resize/',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -133,6 +130,7 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
+    parser.add_argument('--is-test', action='store_true', help='Perform test only')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--eval-crop-ratio', default=0.875, type=float, help="Crop ratio for evaluation")
     parser.add_argument('--dist-eval', action='store_true', default=False, help='Enabling distributed evaluation')
@@ -240,6 +238,19 @@ def main(args):
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc']:.5f}%")
+        return
+    elif args.test:
+        dataset_test, _ = build_dataset(is_train=False, args=args)
+        sampler_test = torch.utils.data.SequentialSampler(dataset_test)
+        data_loader_test = torch.utils.data.DataLoader(
+            dataset_test, sampler=sampler_test,
+            batch_size=int(1.5 * args.batch_size),
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=False
+        )
+        test_stats = evaluate(data_loader_test, model, device)
+        print(f"Accuracy of the network on the {len(dataset_test)} test images: {test_stats['acc']:.5f}%")
         return
 
     print(f"Start training for {args.epochs} epochs")

@@ -3,3 +3,5 @@ output/
 .vscode/
 
 nohup.out
+train.sh
+test.sh
