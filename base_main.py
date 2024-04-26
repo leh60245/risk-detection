@@ -119,10 +119,10 @@ def get_args_parser():
     parser.add_argument('--cosub', action='store_true') 
     
     # Dataset parameters
-    parser.add_argument('--data-path', default='/data1/sliver/jwsuh/construction_dataset/aihub/resized/', type=str,
+    parser.add_argument('--data-path', default='', type=str,
                         help='dataset path')
 
-    parser.add_argument('--output_dir', default='output/resnet152/resize/',
+    parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
