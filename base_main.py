@@ -6,6 +6,7 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
+from torch.utils.tensorboard import SummaryWriter
 import json
 
 from pathlib import Path
@@ -236,24 +237,14 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
     if args.eval:
+        print("Start eval")
         test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc']:.5f}%")
-        return
-    elif args.test:
-        dataset_test, _ = build_dataset(is_train=False, args=args)
-        sampler_test = torch.utils.data.SequentialSampler(dataset_test)
-        data_loader_test = torch.utils.data.DataLoader(
-            dataset_test, sampler=sampler_test,
-            batch_size=int(1.5 * args.batch_size),
-            num_workers=args.num_workers,
-            pin_memory=args.pin_mem,
-            drop_last=False
-        )
-        test_stats = evaluate(data_loader_test, model, device)
-        print(f"Accuracy of the network on the {len(dataset_test)} test images: {test_stats['acc']:.5f}%")
+        print(f"Accuracy of the network on the {len(dataset_val)} test(eval) images: {test_stats['acc']:.5f}%")
         return
 
+
     print(f"Start training for {args.epochs} epochs")
+    writer = SummaryWriter()
     start_time = time.time()
     max_accuracy = 0.0
     for epoch in range(args.start_epoch, args.epochs):
@@ -298,12 +289,13 @@ def main(args):
             
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
+        writer.add_scalar("Loss/train", train_stats["loss"], epoch)
+        writer.add_scalar("Loss/eval", test_stats["loss"], epoch)
+
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
-        
-
         
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
