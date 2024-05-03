@@ -1,7 +1,8 @@
 __pycache__/
 output/
+output2/
 .vscode/
+runs/
 
-nohup.out
 train.sh
 test.sh
